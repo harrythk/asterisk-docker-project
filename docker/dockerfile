@@ -1,0 +1,58 @@
+# ---------- Stage 1: Build ----------
+FROM debian:bullseye AS builder
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    wget \
+    pkg-config \
+    libxml2-dev \
+    libncurses5-dev \
+    uuid-dev \
+    libjansson-dev \
+    libssl-dev \
+    libedit-dev \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src
+
+RUN wget https://downloads.asterisk.org/pub/telephony/asterisk/asterisk-20-current.tar.gz \
+    && tar -xvzf asterisk-20-current.tar.gz \
+    && mv asterisk-20.* asterisk
+
+WORKDIR /usr/src/asterisk
+
+RUN ./configure
+RUN make -j4
+RUN make install
+RUN make samples
+
+# ---------- Stage 2: Runtime ----------
+FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y \
+    libxml2 \
+    libncurses5 \
+    uuid \
+    libjansson4 \
+    libssl1.1 \
+    libedit2 \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Asterisk binaries and data
+COPY --from=builder /usr/sbin/asterisk /usr/sbin/
+COPY --from=builder /etc/asterisk /etc/asterisk
+COPY --from=builder /var/lib/asterisk /var/lib/asterisk
+COPY --from=builder /var/spool/asterisk /var/spool/asterisk
+
+# CRITICAL FIX
+COPY --from=builder /usr/lib /usr/lib
+COPY --from=builder /lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+
+RUN ldconfig
+
+EXPOSE 5060/udp
+EXPOSE 10000-10100/udp
+
+CMD ["asterisk", "-f"]
